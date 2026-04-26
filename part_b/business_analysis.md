@@ -1,0 +1,190 @@
+**(a) Problem Formulation**
+
+To maximize sales, we formulate this as a Regression problem.
+
+Target Variable: items\_sold (the quantity of products sold in a specific store for a specific month).
+
+Candidate Input Features:
+
+Store Characteristics: location\_type (Urban/Rural), store\_size, competition\_density.Actionable Features: promotion\_type (e.g., BOGO, Flat Discount).Temporal Features: month, is\_festival, is\_weekend.External Factors: footfall, customer\_demographics.Justification of Problem Type: This is a Supervised Regression problem because the target variable (items\_sold) is a continuous numerical value. 
+
+By predicting the volume for each promotion type, the business can "prescribe" the promotion that yields the highest predicted value for each store.
+
+
+
+**(b) Target Variable Selection** 
+
+While total sales revenue is a key business KPI, items sold (sales volume) is a more reliable target variable for evaluating promotion effectiveness because:Price Distortion: High revenue can be driven by a few expensive items sold without a promotion, whereas volume directly reflects "traffic" and "conversion" driven by the marketing offer.
+
+Margin Neutrality: Total revenue can be inflated by high-priced stock, but a promotion's goal is usually to clear inventory or increase basket size.Consistency: Revenue fluctuates with price changes, inflation, and seasonal markdowns, whereas volume provides a cleaner signal of consumer response to a specific incentive.
+
+Broader Principle: This illustrates the principle of Proximal vs. Distal targets. In ML, you should select a target variable that is most "proximal" (closely linked) to the action being tested (the promotion) rather than a "distal" business metric (revenue) which is influenced by too many external noise factors.
+
+
+
+**(c) Alternative Modelling Strategy**
+
+Instead of a single global model, I propose a Clustered Modeling (or Segmented Modeling) strategy.
+
+Strategy: Group the 50 stores into clusters (e.g., using K-Means) based on their location\_type and customer\_demographics, then train a separate regression model for each cluster.Justification: This accounts for feature interaction. For example, a "BOGO" offer might perform exceptionally well in Urban areas with high footfall but fail in Rural areas where customers prefer "Flat Discounts." 
+
+A global model may "average out" these nuances, whereas segmented models allow the algorithm to learn the specific sensitivities of different customer bases.
+
+
+
+
+
+
+
+**(a) Data Merging and Aggregation** 
+
+To create a unified dataset, I would perform a series of Left Joins starting with the transaction table:
+
+
+
+Joins:
+
+
+
+Transactions + Calendar: Join on transaction\_date to add holiday/weekend flags.
+
+
+
+Transactions + Store Attributes: Join on store\_id to add location and size data.
+
+
+
+Transactions + Promotion Details: Join on promotion\_id (or date + store) to identify which offer was active.
+
+
+
+Grain of the Dataset: The final grain will be One row per Store, per Month, per Promotion Type.
+
+
+
+Aggregations: Since individual transactions are too granular for a monthly strategy, I would:
+
+
+
+SUM the items\_sold for the target variable.
+
+
+
+AVG the footfall or competition\_density.
+
+
+
+Create a COUNT of promotion\_days (how many days in that month the promotion was actually active).
+
+
+
+**(b) Exploratory Data Analysis (EDA) Strategy** 
+
+Boxplot: Sales by Promotion Type
+
+
+
+Look for median sales and variance across the 5 promotions
+
+
+
+Impact: Identifies which promotions have a strong, consistent signal versus those that are inconsistent
+
+
+
+Time-Series Line Plot
+
+
+
+Look for seasonality or trends in items sold across years
+
+
+
+Impact: If strong seasonality exists, month or quarter will be prioritized as key features
+
+
+
+Correlation Matrix
+
+
+
+Look for relationships between competition density, store size, and sales
+
+
+
+Impact: If two features are perfectly correlated, drop one to avoid multi-collinearity
+
+
+
+Scatter Plot: Footfall vs. Sales
+
+
+
+Look for linear or non-linear relationships
+
+
+
+Impact: If non-linear, consider polynomial features or tree-based models (e.g., Random Forest) instead of Linear Regression
+
+
+
+
+
+**(c) Handling Promotion Imbalance** 
+
+The Problem: If 80% of the data has no promotion, the model will become "biased" toward predicting baseline sales. It might struggle to learn the specific "uplift" caused by a promotion because the "No Promotion" noise overwhelms the signal.
+
+
+
+**Steps to Address:**
+
+
+
+Feature Creation (Uplift Modeling): Instead of predicting total sales, create a feature for "Baseline Sales" and have the model predict the residual (the extra sales) specifically when a promotion is active.
+
+
+
+
+
+**(a) Evaluation Strategy** 
+
+Split Strategy:I would use a Time-Series Split (Temporal Split). Given three years of data, I would use the first 30 months for training and the final 6 months as the test set.Why Random Split is Inappropriate: A random split would lead to Temporal Data Leakage. If the model "sees" sales from December 2025 during training, it will artificially "know" the trends for November 2025 during testing. In retail, future data cannot inform past predictions.
+
+Evaluation Metrics:
+
+MAE (Mean Absolute Error): Interpreted as the average number of items the model is "off" by. Business stakeholders understand this easily (e.g., "The model is accurate within $\\pm$ 50 items per store").
+
+RMSE (Root Mean Squared Error): This penalizes large errors more heavily. It is useful for identifying if the model fails significantly during high-stakes periods like Black Friday or Christmas.
+
+
+
+**(b) Model Explainability** 
+
+To investigate why recommendations differ, I would use Feature Importance and SHAP (SHapley Additive exPlanations) values:
+
+Investigation: For December, the model likely places high weight on is\_festival and historical\_holiday\_velocity. It may find that "Loyalty Points" perform best when shoppers are already planning to spend heavily. For March, a "Flat Discount" might have higher importance because footfall is lower, and the model identifies price sensitivity as the primary driver to get people into the store during a "slow" month.
+
+Communication: I would present the marketing team with a Fea
+
+ure Contribution Plot. I would explain it as: "In December, the 'Holiday Spirit' feature makes Loyalty Points the winner because your customers are already buying; in March, the 'Low Season' feature means we need a 'Price Drop' (Flat Discount) to trigger a purchase."
+
+
+
+**(c) Deployment and Monitoring** 
+
+
+
+End-to-End Process:Model Serialization: Save the trained pipeline (preprocessor + model) using joblib or pickle as a .pkl file. This ensures the scaling and encoding logic is "frozen" along with the model.
+
+Inference Pipeline: At the start of each month:
+
+Load the .pkl file.
+
+Pull the latest store attributes and the upcoming month's calendar data into a "Feature Store."Feed this "unseen" data into the model to generate predictions for all five promotion types for every store.
+
+Selection Logic: An automated script selects the promotion\_type with the highest predicted items\_sold for each store\_id.Monitoring:
+
+Data Drift: Monitor if the input data (e.g., footfall) changes significantly compared to the training data.
+
+Model Decay: Compare the model’s monthly predictions against the actual sales at the end of each month. If the MAE exceeds a pre-defined threshold (e.g., 20% error) for two consecutive months, a trigger initiates a Model Retrain with the most recent data.
+
